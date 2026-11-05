@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>QWERASDF 反應速度訓練器</title>
+<style>
+:root{--bg:#f3f4f1;--panel:#fff;--ink:#1d2320;--mute:#737b76;--line:#d9ddd7;--ok:#1f8a5b;--bad:#d2452f;--cur:#1d2320;--curink:#f3f4f1;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#141816;--panel:#1d2220;--ink:#eceee9;--mute:#8d958f;--line:#2e3532;--ok:#4cc58f;--bad:#f07a63;--cur:#eceee9;--curink:#141816}}
+:root[data-theme="dark"]{--bg:#141816;--panel:#1d2220;--ink:#eceee9;--mute:#8d958f;--line:#2e3532;--ok:#4cc58f;--bad:#f07a63;--cur:#eceee9;--curink:#141816}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;display:flex;justify-content:center;align-items:center;padding:16px}
+main{width:100%;max-width:760px}
+h1{font-size:1.05rem;font-weight:600;margin:0 0 14px;color:var(--mute)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:28px 20px;text-align:center;cursor:pointer;user-select:none}
+.bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden;margin-bottom:8px}
+.bar i{display:block;height:100%;width:100%;background:var(--ink);transform-origin:left}
+.bar.low i{background:var(--bad)}
+.time{font:600 2.4rem/1 "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;margin-bottom:26px;font-variant-numeric:tabular-nums}
+.keys{display:flex;gap:clamp(4px,1.6vw,12px);justify-content:center;margin-bottom:24px}
+.k{width:clamp(36px,10.5vw,72px);aspect-ratio:1;display:grid;place-items:center;border:2px solid var(--line);border-radius:10px;font:700 clamp(1.1rem,4.5vw,2rem)/1 "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;color:var(--ink)}
+.k.cur{background:var(--cur);color:var(--curink);border-color:var(--cur)}
+.k.done{color:var(--ok);border-color:var(--ok);opacity:.55}
+.k.shake{animation:sh .18s;border-color:var(--bad)}
+@keyframes sh{25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}
+.msg{min-height:2.6em;font-size:1rem}
+.msg b{font-size:1.15rem}
+.msg.ok b{color:var(--ok)}.msg.bad b{color:var(--bad)}
+.msg small{display:block;color:var(--mute);margin-top:4px}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:12px}
+.stats div{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 6px;text-align:center}
+.stats span{display:block;font-size:.75rem;color:var(--mute)}
+.stats strong{font:600 1.1rem "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace}
+.rules{margin:14px 2px 0;color:var(--mute);font-size:.82rem;line-height:1.6}
+@media (prefers-reduced-motion:reduce){.k.shake{animation:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>QWERASDF 反應速度訓練器</h1>
+  <div class="stage" id="stage" tabindex="0">
+    <div class="bar" id="bar"><i id="fill"></i></div>
+    <div class="time" id="time">3.00</div>
+    <div class="keys" id="keys"></div>
+    <div class="msg" id="msg"><b>按空白鍵或點一下開始</b><small>依畫面由左至右輸入字母</small></div>
+  </div>
+  <div class="stats">
+    <div><span>成功率</span><strong id="sRate">–</strong></div>
+    <div><span>平均用時</span><strong id="sAvg">–</strong></div>
+    <div><span>最佳</span><strong id="sBest">–</strong></div>
+    <div><span>按錯次數</span><strong id="sErr">0</strong></div>
+  </div>
+  <p class="rules">只使用 Q W E R A S D F，每回合隨機排列、各出現一次，限時 3 秒。按錯不會前進，時間仍會流逝。請使用實體鍵盤。</p>
+</main>
+<script>
+(function(){
+  var LETTERS="QWERASDF".split(""), LIMIT=3000;
+  var $=function(id){return document.getElementById(id)};
+  var keysEl=$("keys"),timeEl=$("time"),msgEl=$("msg"),fill=$("fill"),bar=$("bar");
+  var phase="idle",order=[],idx=0,t0=0,raf=0,roundErr=0;
+  var st={rounds:0,wins:0,sum:0,best:null,err:0};
+  try{var b=parseFloat(localStorage.getItem("qwerasdf-best"));if(b>0)st.best=b}catch(e){}
+
+  function shuffle(a){a=a.slice();for(var i=a.length-1;i>0;i--){var j=Math.floor(Math.random()*(i+1));var t=a[i];a[i]=a[j];a[j]=t}return a}
+  function render(){
+    keysEl.innerHTML="";
+    order.forEach(function(c,i){var d=document.createElement("div");d.className="k"+(i<idx?" done":i===idx&&phase==="play"?" cur":"");d.textContent=c;keysEl.appendChild(d)});
+  }
+  function setMsg(cls,main,sub){msgEl.className="msg "+cls;msgEl.innerHTML="<b>"+main+"</b>"+(sub?"<small>"+sub+"</small>":"")}
+  function stats(){
+    $("sRate").textContent=st.rounds?Math.round(st.wins/st.rounds*100)+"%":"–";
+    $("sAvg").textContent=st.wins?(st.sum/st.wins/1000).toFixed(2)+"s":"–";
+    $("sBest").textContent=st.best?st.best.toFixed(2)+"s":"–";
+    $("sErr").textContent=st.err;
+  }
+  function start(){
+    order=shuffle(LETTERS);idx=0;roundErr=0;phase="play";
+    setMsg("","","");msgEl.innerHTML="<small>&nbsp;</small>";
+    render();t0=performance.now();cancelAnimationFrame(raf);tick();
+  }
+  function tick(){
+    var left=LIMIT-(performance.now()-t0);
+    if(left<=0){return end(false)}
+    timeEl.textContent=(left/1000).toFixed(2);
+    fill.style.transform="scaleX("+(left/LIMIT)+")";
+    bar.className="bar"+(left<1000?" low":"");
+    raf=requestAnimationFrame(tick);
+  }
+  function end(win){
+    cancelAnimationFrame(raf);phase="done";
+    var used=Math.min(LIMIT,performance.now()-t0);
+    st.rounds++;
+    if(win){
+      st.wins++;st.sum+=used;
+      var s=used/1000,rec=false;
+      if(!st.best||s<st.best){st.best=s;rec=true;try{localStorage.setItem("qwerasdf-best",String(s))}catch(e){}}
+      timeEl.textContent=s.toFixed(2);fill.style.transform="scaleX("+(1-used/LIMIT)+")";
+      setMsg("ok","完成！"+s.toFixed(2)+" 秒"+(rec?"（新紀錄）":""),"本回合按錯 "+roundErr+" 次，按空白鍵繼續");
+    }else{
+      timeEl.textContent="0.00";fill.style.transform="scaleX(0)";
+      setMsg("bad","時間到","停在第 "+(idx+1)+" 個字母 "+order[idx]+"，按空白鍵再試一次");
+    }
+    render();stats();
+  }
+  function press(k){
+    if(phase!=="play")return;
+    if(k===order[idx]){idx++;if(idx===order.length){render();end(true)}else render()}
+    else{
+      st.err++;roundErr++;stats();
+      var el=keysEl.children[idx];if(el){el.classList.remove("shake");void el.offsetWidth;el.classList.add("shake")}
+    }
+  }
+  document.addEventListener("keydown",function(e){
+    if(e.ctrlKey||e.metaKey||e.altKey)return;
+    if(e.code==="Space"||e.key==="Enter"){e.preventDefault();if(phase!=="play"&&!e.repeat)start();return}
+    var k=e.key.toUpperCase();
+    if(e.repeat||LETTERS.indexOf(k)<0)return;
+    press(k);
+  });
+  $("stage").addEventListener("click",function(){if(phase!=="play")start()});
+  stats();
+})();
+</script>
+</body>
+</html>
